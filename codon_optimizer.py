@@ -1,8 +1,7 @@
 """
 codon_optimizer.py - reverse-translation with codon-usage optimisation.
 
-Primary target organism : Saccharomyces cerevisiae
-Comparison organism     : Escherichia coli K-12
+Target organism : Saccharomyces cerevisiae
 
 Pure standard library (math / random / re) so it runs anywhere, including
 a Streamlit Cloud container, with no compiled dependencies.
@@ -79,28 +78,6 @@ FREQS = {
         'V': {'GTT': 0.39, 'GTC': 0.21, 'GTA': 0.21, 'GTG': 0.19},
         '*': {'TAA': 0.47, 'TAG': 0.23, 'TGA': 0.30},
     },
-    'E_coli_K12': {
-        'A': {'GCT': 0.16, 'GCC': 0.27, 'GCA': 0.21, 'GCG': 0.36},
-        'R': {'CGT': 0.38, 'CGC': 0.40, 'CGA': 0.06, 'CGG': 0.10,
-              'AGA': 0.04, 'AGG': 0.02},
-        'N': {'AAT': 0.45, 'AAC': 0.55}, 'D': {'GAT': 0.63, 'GAC': 0.37},
-        'C': {'TGT': 0.44, 'TGC': 0.56}, 'Q': {'CAA': 0.35, 'CAG': 0.65},
-        'E': {'GAA': 0.69, 'GAG': 0.31},
-        'G': {'GGT': 0.34, 'GGC': 0.41, 'GGA': 0.11, 'GGG': 0.15},
-        'H': {'CAT': 0.57, 'CAC': 0.43},
-        'I': {'ATT': 0.51, 'ATC': 0.42, 'ATA': 0.07},
-        'L': {'TTA': 0.13, 'TTG': 0.13, 'CTT': 0.10, 'CTC': 0.10,
-              'CTA': 0.04, 'CTG': 0.50},
-        'K': {'AAA': 0.76, 'AAG': 0.24}, 'M': {'ATG': 1.00},
-        'F': {'TTT': 0.57, 'TTC': 0.43},
-        'P': {'CCT': 0.16, 'CCC': 0.12, 'CCA': 0.19, 'CCG': 0.53},
-        'S': {'TCT': 0.15, 'TCC': 0.15, 'TCA': 0.12, 'TCG': 0.15,
-              'AGT': 0.15, 'AGC': 0.28},
-        'T': {'ACT': 0.16, 'ACC': 0.44, 'ACA': 0.13, 'ACG': 0.27},
-        'W': {'TGG': 1.00}, 'Y': {'TAT': 0.57, 'TAC': 0.43},
-        'V': {'GTT': 0.26, 'GTC': 0.22, 'GTA': 0.15, 'GTG': 0.37},
-        '*': {'TAA': 0.64, 'TAG': 0.07, 'TGA': 0.29},
-    },
 }
 
 
@@ -166,27 +143,6 @@ ORGANISM_CONFIGS = {
             'AT-rich cryptic terminator': r'[AT]{6,}',
         },
         'gc_range': (0.35, 0.45),
-    },
-    'E_coli_K12': {
-        'label': 'Escherichia coli K-12',
-        'restriction_sites': {
-            'EcoRI': 'GAATTC', 'BamHI': 'GGATCC', 'HindIII': 'AAGCTT',
-            'XhoI': 'CTCGAG', 'SalI': 'GTCGAC', 'NotI': 'GCGGCCGC',
-            'SpeI': 'ACTAGT', 'XbaI': 'TCTAGA',
-            'NdeI': 'CATATG',   # contains ATG - classic re-cloning trap
-            'NcoI': 'CCATGG',   # contains ATG - classic re-cloning trap
-        },
-        'avoid': {
-            'internal Shine-Dalgarno': r'AGG[AG]GG|AGGAG|GAGGG',
-            'terminator-like poly-T': r'T{6,}',
-            'rare-codon cluster': r'(?:AGA|AGG|ATA|CCC|CTA|GGA){3,}',
-            'T7-terminator-like': r'TAAAT[AT]{5,}',
-        },
-        'report': {
-            'dam methylation site (GATC)': r'GATC',
-            'dcm methylation site (CCWGG)': r'CC[AT]GG',
-        },
-        'gc_range': (0.40, 0.60),
     },
 }
 
@@ -291,7 +247,7 @@ def build_forbidden(cfg: dict, extra_sites=()) -> Forbidden:
 # ==========================================================================
 def reverse_translate(protein: str, weights: dict, forbidden: Forbidden | None = None,
                       expression: str = 'high', seed: int | None = None,
-                      head_sample_codons: int = 0) -> str:
+                      head_sample_codons: int = 0, lookback: int = 3) -> str:
     """Back-translate a protein, codon by codon, avoiding forbidden patterns.
 
     expression:
@@ -331,14 +287,67 @@ def reverse_translate(protein: str, weights: dict, forbidden: Forbidden | None =
                 del pool[pick]
 
         chosen = next((c for c in ranked if not forbidden.introduces(dna, c)), None)
+
+        if chosen is None and lookback:
+            # No clean codon here. The conflict is often only fixable by
+            # changing an EARLIER codon, which a purely forward greedy can
+            # never do: e.g. ...CAA GCT TGG... spells HindIII (AAGCTT) across
+            # three codons, and Trp has no synonym, so the only escape is to
+            # re-pick the Ala. Worse, ...AAA GCT + any stop codon spells it
+            # too, because all three stops begin with T.
+            chosen, out, dna = _backtrack(
+                out, dna, idx, ranked, weights, forbidden, expression, lookback)
+
         if chosen is None:
-            # Nothing is clean here (can happen inside a Trp/Met stretch).
-            # Fall back to the first-ranked codon and let the QC report say so.
+            # Genuinely unavoidable (e.g. a long Trp/Met stretch). Emit the
+            # best codon and let the QC report show the residual hit.
             chosen = ranked[0]
+
         out.append(chosen)
         dna += chosen
 
     return dna
+
+
+def _backtrack(out, dna, idx, ranked, weights, forbidden, expression, lookback):
+    """Try re-picking a recent codon so position `idx` has a clean option.
+
+    Walks back up to `lookback` codons. For each, tries every synonym that is
+    itself clean, re-lays the untouched codons in between, and asks whether
+    any codon at `idx` is now clean. Returns (chosen, out, dna) on success,
+    or (None, out, dna) unchanged on failure.
+
+    Bounded work: lookback x 6 synonyms x lookback re-checks, so it costs a
+    constant factor and only runs on the rare positions that are stuck.
+    """
+    prefer_rare = expression == 'low'
+
+    for back in range(1, min(lookback, len(out)) + 1):
+        j = idx - back
+        aa_j = AA_BY_CODON[out[j]]
+        prefix = ''.join(out[:j])
+        alts = sorted((c for c in CODON_TABLE[aa_j] if c != out[j]),
+                      key=lambda c: weights.get(c, 0.0),
+                      reverse=not prefer_rare)
+
+        for alt in alts:
+            if forbidden.introduces(prefix, alt):
+                continue
+            trial, seq, ok = out[:j] + [alt], prefix + alt, True
+            for k in range(j + 1, idx):         # re-lay the in-between codons
+                if forbidden.introduces(seq, out[k]):
+                    ok = False
+                    break
+                trial.append(out[k])
+                seq += out[k]
+            if not ok:
+                continue
+            pick = next((c for c in ranked
+                         if not forbidden.introduces(seq, c)), None)
+            if pick is not None:
+                return pick, trial, seq
+
+    return None, out, dna
 
 
 # ==========================================================================
@@ -537,19 +546,77 @@ def five_prime_structure_score(dna: str, window: int = 48) -> dict:
     }
 
 
-# Destabilising N-terminal residues. Yeast: Bachmair/Varshavsky N-end rule.
-# E. coli: the ClpS/Leu-Phe-transferase branch.
+# Destabilising N-terminal residues (Bachmair/Varshavsky N-end rule, yeast).
 N_END_DESTABILISING = {
     'S_cerevisiae': set('RKHFLWIYND'),
-    'E_coli_K12': set('RKLFWY'),
 }
 
+# --------------------------------------------------------------------------
+# Translation-initiation context (Kozak)
+# --------------------------------------------------------------------------
+# S. cerevisiae prefers an A-rich leader. A at -3 is the single strongest
+# signal (Hamilton et al. 1987; Cigan & Donahue 1987); -1 and -2 also favour
+# A. The canonical strong context is AAAAAA-ATG.
+#
+# IMPORTANT: positions -1..-6 lie in the 5' UTR, which this tool does NOT
+# design - they come from the vector/promoter. The context can therefore only
+# be CHECKED when the user supplies the upstream sequence, never inferred
+# from the protein. kozak_check returns 'unknown' rather than guessing.
+KOZAK_PREFERRED = 'A'
+RECOMMENDED_LEADER = 'AAAAAA'
 
-def extra_checks(dna: str, protein: str, organism: str) -> dict:
+
+def kozak_check(upstream: str, dna: str) -> dict:
+    """Score the translation-initiation context around the start codon.
+
+    upstream: the 5' UTR bases immediately preceding the ATG (vector-derived,
+    may be empty). Only the last 6 are used.
+    """
+    up = re.sub(r'[^ACGT]', '', (upstream or '').upper())
+    start_ok = dna[:3] == 'ATG'
+
+    if not up:
+        return {
+            'context': None,
+            'minus3': None,
+            'a_richness': None,
+            'flag': False,
+            'status': 'unknown',
+            'starts_with_ATG': start_ok,
+            'recommended_leader': RECOMMENDED_LEADER,
+            'note': ('No 5\' UTR supplied, so the initiation context cannot '
+                     'be assessed - it is determined by your vector, not by '
+                     f'the coding sequence. A {RECOMMENDED_LEADER} leader '
+                     'immediately before the ATG is a strong default.'),
+        }
+
+    ctx = up[-6:]
+    minus3 = ctx[-3] if len(ctx) >= 3 else None
+    a_rich = round(ctx.count('A') / len(ctx), 2)
+    weak = minus3 is not None and minus3 != KOZAK_PREFERRED
+
+    return {
+        'context': f'{ctx}|{dna[:4]}',
+        'minus3': minus3,
+        'a_richness': a_rich,
+        'flag': weak,
+        'status': 'weak' if weak else 'strong',
+        'starts_with_ATG': start_ok,
+        'recommended_leader': RECOMMENDED_LEADER,
+        'note': (f'-3 is {minus3}, not A: yeast initiation is measurably less '
+                 'efficient without A at -3'
+                 if weak else
+                 'A at -3, the dominant yeast initiation signal'),
+    }
+
+
+def extra_checks(dna: str, protein: str, organism: str,
+                 upstream: str = '') -> dict:
     """Properties beyond codon usage that affect transcription/translation."""
     cfg = ORGANISM_CONFIGS[organism]
     checks = {}
 
+    checks['kozak_context'] = kozak_check(upstream, dna)
     checks['five_prime_structure'] = five_prime_structure_score(dna)
 
     # 5'-terminal GC: a GC-poor ramp eases ribosome loading
@@ -560,23 +627,15 @@ def extra_checks(dna: str, protein: str, organism: str) -> dict:
         'note': 'high 5\' GC can occlude the ribosome-binding region',
     }
 
-    # Second codon: position 2 has a measurable effect on initiation.
-    # The note is organism-specific so a report never mentions the host the
-    # user did not select.
+    # Second codon: position +2 influences initiation, but yeast has no
+    # consensus rule as sharp as the -3 signal, so this is reported only.
     second = dna[3:6]
-    if organism == 'E_coli_K12':
-        second_flag = second.startswith('A')
-        second_note = ('A-starting second codons can promote internal '
-                       're-initiation in E. coli')
-    else:
-        second_flag = False
-        second_note = ('position 2 influences initiation efficiency; '
-                       'no strong consensus rule in S. cerevisiae')
     checks['second_codon'] = {
         'codon': second,
         'aa': AA_BY_CODON.get(second),
-        'flag': second_flag,
-        'note': second_note,
+        'flag': False,
+        'note': ('position +2 influences initiation efficiency; no strong '
+                 'consensus rule in S. cerevisiae'),
     }
 
     # N-end rule: the residue exposed after Met excision sets protein half-life
@@ -587,15 +646,6 @@ def extra_checks(dna: str, protein: str, organism: str) -> dict:
         'flag': exposed in N_END_DESTABILISING[organism],
         'note': 'destabilising N-terminal residue - short half-life expected',
     }
-
-    if organism == 'E_coli_K12':
-        dam = [m.start() for m in re.finditer(r'(?=GATC)', dna)]
-        dcm = [m.start() for m in re.finditer(r'(?=CC[AT]GG)', dna)]
-        checks['dam_dcm_sites'] = {
-            'dam_GATC': dam, 'dcm_CCWGG': dcm,
-            'flag': bool(dam or dcm),
-            'note': 'methylated in dam+/dcm+ strains; blocks some REs on cloning',
-        }
 
     return checks
 
@@ -690,9 +740,10 @@ def five_prime_sanity_check(protein: str, weights: dict, cfg: dict,
 # ==========================================================================
 # 11. One-call pipeline
 # ==========================================================================
-def optimize(protein: str, organism: str, expression: str = 'high',
+def optimize(protein: str, organism: str = 'S_cerevisiae',
+             expression: str = 'high',
              extra_sites=(), add_stop: bool = True, seed: int = 0,
-             five_prime_check: bool = True) -> dict:
+             five_prime_check: bool = True, upstream: str = '') -> dict:
     """Protein sequence in -> optimised DNA plus a full QC report.
 
     five_prime_check: if the CAI-maximal design has a stable 5' hairpin,
@@ -740,27 +791,11 @@ def optimize(protein: str, organism: str, expression: str = 'high',
         'motifs_avoided_but_present': find_motifs(dna, cfg['avoid']),
         'motifs_reported': find_motifs(dna, cfg['report']),
         'homopolymers': homopolymer_runs(dna),
-        'extra_checks': extra_checks(dna, coding_aa, organism),
+        'extra_checks': extra_checks(dna, coding_aa, organism, upstream),
         'five_prime_optimization': fp_report,
         # Hard correctness gate: the DNA must translate back to the input.
         'translates_back': back == coding_aa,
     }
-
-
-def compare_organisms(protein: str, expression: str = 'high', **kw) -> dict:
-    """Design for both hosts and cross-score each design in the other host.
-
-    The cross-CAI is the interesting number: a yeast-optimised gene scored
-    with E. coli weights shows directly how host-specific the design is.
-    """
-    results = {org: optimize(protein, org, expression, **kw)
-               for org in ORGANISM_CONFIGS}
-    for org, res in results.items():
-        res['cross_cai'] = {
-            other: round(cai(res['dna'], build_weights(FREQS[other])), 3)
-            for other in ORGANISM_CONFIGS if other != org
-        }
-    return results
 
 
 # ==========================================================================
@@ -770,24 +805,25 @@ if __name__ == '__main__':
     # 34-aa fragment of GFP, used as the standard test case
     DEMO = 'MSKGEELFTGVVPILVELDGDVNGHKFSVSGEGE'
 
-    for organism in ORGANISM_CONFIGS:
-        for level in ('high', 'medium', 'low'):
-            r = optimize(DEMO, organism, level)
-            flags = (len(r['restriction_sites_found'])
-                     + len(r['motifs_avoided_but_present']))
-            fp = r['five_prime_optimization']
-            print(f"{r['organism_label']:<40} {level:<7} "
-                  f"CAI={r['cai']:.3f}  GC={r['gc']:.3f} "
-                  f"{'OK ' if r['gc_ok'] else 'OUT'}  "
-                  f"flags={flags}  5'dG={fp['final_dG']:>6}"
-                  f"{' (tuned)' if fp['applied'] else '        '}  "
-                  f"back-translation={'ok' if r['translates_back'] else 'FAIL'}")
+    for level in ('high', 'medium', 'low'):
+        r = optimize(DEMO, expression=level)
+        flags = (len(r['restriction_sites_found'])
+                 + len(r['motifs_avoided_but_present']))
+        fp = r['five_prime_optimization']
+        print(f"{r['organism_label']:<40} {level:<7} "
+              f"CAI={r['cai']:.3f}  GC={r['gc']:.3f} "
+              f"{'OK ' if r['gc_ok'] else 'OUT'}  "
+              f"flags={flags}  5'dG={fp['final_dG']:>6}"
+              f"{' (tuned)' if fp['applied'] else '        '}  "
+              f"back-translation={'ok' if r['translates_back'] else 'FAIL'}")
 
-    print()
-    cmp = compare_organisms(DEMO)
-    for org, r in cmp.items():
-        print(f"{org}: native CAI {r['cai']:.3f}, "
-              f"cross-scored {r['cross_cai']}")
+    print("\nKozak context (depends on the vector, not the CDS):")
+    for label, utr in [('no UTR supplied', ''),
+                       ('strong  AAAAAA', 'AAAAAA'),
+                       ('weak    GCCGCC', 'GCCGCC')]:
+        k = optimize(DEMO, upstream=utr)['extra_checks']['kozak_context']
+        print(f"  {label:<18} status={k['status']:<8} "
+              f"-3={k['minus3']}  context={k['context']}")
 
 
 # ==========================================================================

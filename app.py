@@ -21,21 +21,33 @@ from theme import apply_theme, draw, helix, squiggle_rule
 MAX_PROTEIN_LEN = 3000          # guards against a pasted genome
 
 # Verified character-for-character against the UniProt entries cited.
+# (label: (accession, note, sequence))
 EXAMPLES = {
     'avGFP': (
         'P42212',
+        'jellyfish reporter, the codon-optimisation benchmark',
         'MSKGEELFTGVVPILVELDGDVNGHKFSVSGEGEGDATYGKLTLKFICTTGKLPVPWPTLVTTFSYG'
         'VQCFSRYPDHMKQHDFFKSAMPEGYVQERTIFFKDDGNYKTRAEVKFEGDTLVNRIELKGIDFKEDG'
         'NILGHKLEYNYNSHNVYIMADKQKNGIKVNFKIRHNIEDGSVQLADHYQQNTPIGDGPVLLPDNHYL'
         'STQSALSKDPNEKRDHMVLLEFVTAAGITHGMDELYK'),
     'DsRed': (
         'Q9U6Y8',
+        'coral red fluorescent protein, parent of mCherry',
         'MRSSKNVIKEFMRFKVRMEGTVNGHEFEIEGEGEGRPYEGHNTVKLKVTKGGPLPFAWDILSPQFQY'
         'GSKVYVKHPADIPDYKKLSFPEGFKWERVMNFEDGGVVTVTQDSSLQDGCFIYKVKFIGVNFPSDGP'
         'VMQKKTMGWEASTERLYPRDGVLKGEIHKALKLKDGGHYLVEFKSIYMAKKPVQLPGYYYVDSKLDI'
         'TSHNEDYTIVEQYERTEGRHHLFL'),
+    'TDH3': (
+        'P00359',
+        'NATIVE yeast GAPDH - compare against the real gene',
+        'MVRVAINGFGRIGRLVMRIALSRPNVEVVALNDPFITNDYAAYMFKYDSTHGRYAGEVSHDDKHIIV'
+        'DGKKIATYQERDPANLPWGSSNVDIAIDSTGVFKELDTAQKHIDAGAKKVVITAPSSTAPMFVMGVN'
+        'EEKYTSDLKIVSNASCTTNCLAPLAKVINDAFGIEEGLMTTVHSLTATQKTVDGPSHKDWRGGRTAS'
+        'GNIIPSSTGAAKAVGKVLPELQGKLTGMAFRVPTVDVSVVDLTVKLNKETTYDEIKKVVKAAAEGKL'
+        'KGVLGYTEDAVVSSDFLGDSHSSIFDASAGIQLSPKFVKLVSWYDNEYGYSTRVVDLVEHVAKA'),
     'Insulin': (
         'P01308',
+        'human preproinsulin, a classic yeast-expressed therapeutic',
         'MALWMRLLPLLALLALWGPDPAAAFVNQHLCGSHLVEALYLVCGERGFFYTPKTRREAEDLQVGQVE'
         'LGGGPGAGSLQPLALEGSLQKRGIVEQCCTSICSLYQLENYCN'),
 }
@@ -107,13 +119,20 @@ with st.sidebar:
 
 st.sidebar.header('Design parameters')
 
-organism = st.sidebar.selectbox(
-    'Target organism',
-    list(ORGANISM_CONFIGS),
-    format_func=lambda k: ORGANISM_CONFIGS[k]['label'],
-    help='Codon usage table, restriction panel, motif set and GC window all '
-         'switch with this choice.',
-)
+if len(ORGANISM_CONFIGS) == 1:
+    # A one-item dropdown is pointless; show the target instead. The moment a
+    # second organism is added to ORGANISM_CONFIGS this becomes a selector
+    # again, with no other change needed.
+    organism = next(iter(ORGANISM_CONFIGS))
+    st.sidebar.markdown(f"**Target organism**  \n{ORGANISM_CONFIGS[organism]['label']}")
+else:
+    organism = st.sidebar.selectbox(
+        'Target organism',
+        list(ORGANISM_CONFIGS),
+        format_func=lambda k: ORGANISM_CONFIGS[k]['label'],
+        help='Codon usage table, restriction panel, motif set and GC window '
+             'all switch with this choice.',
+    )
 
 expression = st.sidebar.radio(
     'Desired expression level',
@@ -137,6 +156,13 @@ with st.sidebar.expander('Advanced'):
         placeholder='GGTCTC, CGTCTC',
         help='Comma-separated DNA sequences, e.g. BsaI/BsmBI for Golden Gate. '
              'Both strands are blocked automatically.',
+    )
+    upstream = st.text_input(
+        "5' UTR before the ATG",
+        placeholder='AAAAAA',
+        help="The last bases of your vector's 5' UTR, immediately before the "
+             'start codon. Used only to score the Kozak initiation context - '
+             'this tool does not design the UTR. Leave blank if unknown.',
     )
     add_stop = st.checkbox('Append stop codon', value=True)
     five_prime_check = st.checkbox(
@@ -162,9 +188,9 @@ if 'protein_text' not in st.session_state:
     st.session_state.protein_text = ''
 
 cols = st.columns(len(EXAMPLES) + 1)
-for col, (label, (acc, seq)) in zip(cols, EXAMPLES.items()):
+for col, (label, (acc, note, seq)) in zip(cols, EXAMPLES.items()):
     if col.button(f'{label}', use_container_width=True,
-                  help=f'UniProt {acc}, {len(seq)} aa'):
+                  help=f'UniProt {acc} - {note} ({len(seq)} aa)'):
         st.session_state.protein_text = seq
 if cols[-1].button('Clear', use_container_width=True):
     st.session_state.protein_text = ''
@@ -221,7 +247,8 @@ if run:
         st.session_state.result = optimize(
             protein_text, organism, expression,
             extra_sites=extra_sites, add_stop=add_stop,
-            seed=int(seed), five_prime_check=five_prime_check)
+            seed=int(seed), five_prime_check=five_prime_check,
+            upstream=upstream)
 
 # Render from session state, not straight from the button. A button is True
 # for one rerun only, so rendering inside `if run:` makes the whole report
@@ -332,6 +359,9 @@ if r:
             detail = {k: v for k, v in c.items() if k not in ('flag', 'note')}
             if c.get('flag'):
                 st.warning(f"**{label}** - {c['note']}\n\n`{detail}`")
+            elif c.get('status') == 'unknown':
+                # Not assessed is not the same as fine - never show it green.
+                st.info(f"**{label}** - not assessed\n\n{c['note']}")
             else:
                 st.success(f"**{label}** - OK\n\n`{detail}`")
             if name == 'five_prime_structure':
