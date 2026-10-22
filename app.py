@@ -39,7 +39,8 @@ EXAMPLES = {
         'TSHNEDYTIVEQYERTEGRHHLFL'),
     'TDH3': (
         'P00359',
-        'NATIVE yeast GAPDH - compare against the real gene',
+        'native S. cerevisiae GAPDH - with yeast selected, compare the '
+        'design against the real gene',
         'MVRVAINGFGRIGRLVMRIALSRPNVEVVALNDPFITNDYAAYMFKYDSTHGRYAGEVSHDDKHIIV'
         'DGKKIATYQERDPANLPWGSSNVDIAIDSTGVFKELDTAQKHIDAGAKKVVITAPSSTAPMFVMGVN'
         'EEKYTSDLKIVSNASCTTNCLAPLAKVINDAFGIEEGLMTTVHSLTATQKTVDGPSHKDWRGGRTAS'
@@ -359,9 +360,12 @@ if r:
             detail = {k: v for k, v in c.items() if k not in ('flag', 'note')}
             if c.get('flag'):
                 st.warning(f"**{label}** - {c['note']}\n\n`{detail}`")
-            elif c.get('status') == 'unknown':
-                # Not assessed is not the same as fine - never show it green.
-                st.info(f"**{label}** - not assessed\n\n{c['note']}")
+            elif c.get('status') in ('unknown', 'not_applicable'):
+                # Neither "not assessed" nor "does not apply" means "fine" -
+                # never show either as a green pass.
+                word = ('not assessed' if c['status'] == 'unknown'
+                        else 'not applicable to this host')
+                st.info(f"**{label}** - {word}\n\n{c['note']}")
             else:
                 st.success(f"**{label}** - OK\n\n`{detail}`")
             if name == 'five_prime_structure':

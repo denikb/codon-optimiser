@@ -1,7 +1,9 @@
 """
 codon_optimizer.py - reverse-translation with codon-usage optimisation.
 
-Target organism : Saccharomyces cerevisiae
+Hosts: S. cerevisiae, E. coli K-12, B. subtilis 168, H. sapiens / HEK293.
+Each host is a pure-data entry in FREQS + ORGANISM_CONFIGS; adding another
+means adding data, never editing the design or reporting functions.
 
 Pure standard library (math / random / re) so it runs anywhere, including
 a Streamlit Cloud container, with no compiled dependencies.
@@ -56,27 +58,113 @@ def revcomp(dna: str) -> str:
 # 2. Codon usage frequencies (fraction within each synonymous family)
 # ==========================================================================
 FREQS = {
+    # S_cerevisiae  -  Kazusa via python_codon_tables, 14,411 CDSs
     'S_cerevisiae': {
+        '*': {'TAA': 0.47, 'TAG': 0.23, 'TGA': 0.30},
         'A': {'GCT': 0.38, 'GCC': 0.22, 'GCA': 0.29, 'GCG': 0.11},
-        'R': {'CGT': 0.14, 'CGC': 0.06, 'CGA': 0.07, 'CGG': 0.04,
-              'AGA': 0.48, 'AGG': 0.21},
-        'N': {'AAT': 0.59, 'AAC': 0.41}, 'D': {'GAT': 0.65, 'GAC': 0.35},
-        'C': {'TGT': 0.63, 'TGC': 0.37}, 'Q': {'CAA': 0.69, 'CAG': 0.31},
+        'C': {'TGT': 0.63, 'TGC': 0.37},
+        'D': {'GAT': 0.65, 'GAC': 0.35},
         'E': {'GAA': 0.70, 'GAG': 0.30},
+        'F': {'TTT': 0.59, 'TTC': 0.41},
         'G': {'GGT': 0.47, 'GGC': 0.19, 'GGA': 0.22, 'GGG': 0.12},
         'H': {'CAT': 0.64, 'CAC': 0.36},
         'I': {'ATT': 0.46, 'ATC': 0.26, 'ATA': 0.27},
-        'L': {'TTA': 0.28, 'TTG': 0.29, 'CTT': 0.13, 'CTC': 0.06,
-              'CTA': 0.14, 'CTG': 0.11},
-        'K': {'AAA': 0.58, 'AAG': 0.42}, 'M': {'ATG': 1.00},
-        'F': {'TTT': 0.59, 'TTC': 0.41},
+        'K': {'AAA': 0.58, 'AAG': 0.42},
+        'L': {'TTA': 0.28, 'TTG': 0.29, 'CTT': 0.13,
+              'CTC': 0.06, 'CTA': 0.14, 'CTG': 0.11},
+        'M': {'ATG': 1.00},
+        'N': {'AAT': 0.59, 'AAC': 0.41},
         'P': {'CCT': 0.31, 'CCC': 0.15, 'CCA': 0.42, 'CCG': 0.12},
-        'S': {'TCT': 0.26, 'TCC': 0.16, 'TCA': 0.21, 'TCG': 0.10,
-              'AGT': 0.16, 'AGC': 0.11},
+        'Q': {'CAA': 0.69, 'CAG': 0.31},
+        'R': {'CGT': 0.14, 'CGC': 0.06, 'CGA': 0.07,
+              'CGG': 0.04, 'AGA': 0.48, 'AGG': 0.21},
+        'S': {'TCT': 0.26, 'TCC': 0.16, 'TCA': 0.21,
+              'TCG': 0.10, 'AGT': 0.16, 'AGC': 0.11},
         'T': {'ACT': 0.35, 'ACC': 0.22, 'ACA': 0.30, 'ACG': 0.14},
-        'W': {'TGG': 1.00}, 'Y': {'TAT': 0.56, 'TAC': 0.44},
         'V': {'GTT': 0.39, 'GTC': 0.21, 'GTA': 0.21, 'GTG': 0.19},
-        '*': {'TAA': 0.47, 'TAG': 0.23, 'TGA': 0.30},
+        'W': {'TGG': 1.00},
+        'Y': {'TAT': 0.56, 'TAC': 0.44},
+    },
+    # E_coli_K12  -  Kazusa via python_codon_tables, K-12 derived
+    'E_coli_K12': {
+        '*': {'TAA': 0.64, 'TAG': 0.07, 'TGA': 0.29},
+        'A': {'GCT': 0.16, 'GCC': 0.27, 'GCA': 0.21, 'GCG': 0.36},
+        'C': {'TGT': 0.44, 'TGC': 0.56},
+        'D': {'GAT': 0.63, 'GAC': 0.37},
+        'E': {'GAA': 0.69, 'GAG': 0.31},
+        'F': {'TTT': 0.57, 'TTC': 0.43},
+        'G': {'GGT': 0.34, 'GGC': 0.41, 'GGA': 0.11, 'GGG': 0.15},
+        'H': {'CAT': 0.57, 'CAC': 0.43},
+        'I': {'ATT': 0.51, 'ATC': 0.42, 'ATA': 0.07},
+        'K': {'AAA': 0.76, 'AAG': 0.24},
+        'L': {'TTA': 0.13, 'TTG': 0.13, 'CTT': 0.10,
+              'CTC': 0.10, 'CTA': 0.04, 'CTG': 0.50},
+        'M': {'ATG': 1.00},
+        'N': {'AAT': 0.45, 'AAC': 0.55},
+        'P': {'CCT': 0.16, 'CCC': 0.12, 'CCA': 0.19, 'CCG': 0.53},
+        'Q': {'CAA': 0.35, 'CAG': 0.65},
+        'R': {'CGT': 0.38, 'CGC': 0.40, 'CGA': 0.06,
+              'CGG': 0.10, 'AGA': 0.04, 'AGG': 0.02},
+        'S': {'TCT': 0.15, 'TCC': 0.15, 'TCA': 0.12,
+              'TCG': 0.15, 'AGT': 0.15, 'AGC': 0.28},
+        'T': {'ACT': 0.16, 'ACC': 0.44, 'ACA': 0.13, 'ACG': 0.27},
+        'V': {'GTT': 0.26, 'GTC': 0.22, 'GTA': 0.15, 'GTG': 0.37},
+        'W': {'TGG': 1.00},
+        'Y': {'TAT': 0.57, 'TAC': 0.43},
+    },
+    # B_subtilis  -  Kazusa via python_codon_tables, strain 168
+    'B_subtilis': {
+        '*': {'TAA': 0.61, 'TAG': 0.15, 'TGA': 0.24},
+        'A': {'GCT': 0.24, 'GCC': 0.22, 'GCA': 0.28, 'GCG': 0.26},
+        'C': {'TGT': 0.46, 'TGC': 0.54},
+        'D': {'GAT': 0.64, 'GAC': 0.36},
+        'E': {'GAA': 0.68, 'GAG': 0.32},
+        'F': {'TTT': 0.68, 'TTC': 0.32},
+        'G': {'GGT': 0.19, 'GGC': 0.34, 'GGA': 0.31, 'GGG': 0.16},
+        'H': {'CAT': 0.68, 'CAC': 0.32},
+        'I': {'ATT': 0.49, 'ATC': 0.37, 'ATA': 0.13},
+        'K': {'AAA': 0.70, 'AAG': 0.30},
+        'L': {'TTA': 0.21, 'TTG': 0.16, 'CTT': 0.23,
+              'CTC': 0.11, 'CTA': 0.05, 'CTG': 0.24},
+        'M': {'ATG': 1.00},
+        'N': {'AAT': 0.56, 'AAC': 0.44},
+        'P': {'CCT': 0.28, 'CCC': 0.09, 'CCA': 0.19, 'CCG': 0.44},
+        'Q': {'CAA': 0.52, 'CAG': 0.48},
+        'R': {'CGT': 0.18, 'CGC': 0.20, 'CGA': 0.10,
+              'CGG': 0.17, 'AGA': 0.25, 'AGG': 0.10},
+        'S': {'TCT': 0.20, 'TCC': 0.13, 'TCA': 0.23,
+              'TCG': 0.10, 'AGT': 0.11, 'AGC': 0.23},
+        'T': {'ACT': 0.16, 'ACC': 0.17, 'ACA': 0.40, 'ACG': 0.27},
+        'V': {'GTT': 0.28, 'GTC': 0.26, 'GTA': 0.20, 'GTG': 0.26},
+        'W': {'TGG': 1.00},
+        'Y': {'TAT': 0.65, 'TAC': 0.35},
+    },
+    # H_sapiens  -  Kazusa via python_codon_tables, human / HEK293
+    'H_sapiens': {
+        '*': {'TAA': 0.30, 'TAG': 0.24, 'TGA': 0.47},
+        'A': {'GCT': 0.27, 'GCC': 0.40, 'GCA': 0.23, 'GCG': 0.11},
+        'C': {'TGT': 0.46, 'TGC': 0.54},
+        'D': {'GAT': 0.46, 'GAC': 0.54},
+        'E': {'GAA': 0.42, 'GAG': 0.58},
+        'F': {'TTT': 0.46, 'TTC': 0.54},
+        'G': {'GGT': 0.16, 'GGC': 0.34, 'GGA': 0.25, 'GGG': 0.25},
+        'H': {'CAT': 0.42, 'CAC': 0.58},
+        'I': {'ATT': 0.36, 'ATC': 0.47, 'ATA': 0.17},
+        'K': {'AAA': 0.43, 'AAG': 0.57},
+        'L': {'TTA': 0.08, 'TTG': 0.13, 'CTT': 0.13,
+              'CTC': 0.20, 'CTA': 0.07, 'CTG': 0.40},
+        'M': {'ATG': 1.00},
+        'N': {'AAT': 0.47, 'AAC': 0.53},
+        'P': {'CCT': 0.29, 'CCC': 0.32, 'CCA': 0.28, 'CCG': 0.11},
+        'Q': {'CAA': 0.27, 'CAG': 0.73},
+        'R': {'CGT': 0.08, 'CGC': 0.18, 'CGA': 0.11,
+              'CGG': 0.20, 'AGA': 0.21, 'AGG': 0.21},
+        'S': {'TCT': 0.19, 'TCC': 0.22, 'TCA': 0.15,
+              'TCG': 0.05, 'AGT': 0.15, 'AGC': 0.24},
+        'T': {'ACT': 0.25, 'ACC': 0.36, 'ACA': 0.28, 'ACG': 0.11},
+        'V': {'GTT': 0.18, 'GTC': 0.24, 'GTA': 0.12, 'GTG': 0.46},
+        'W': {'TGG': 1.00},
+        'Y': {'TAT': 0.44, 'TAC': 0.56},
     },
 }
 
@@ -143,8 +231,127 @@ ORGANISM_CONFIGS = {
             'AT-rich cryptic terminator': r'[AT]{6,}',
         },
         'gc_range': (0.35, 0.45),
+        # Yeast initiation: A at -3 dominates (Hamilton 1987; Cigan 1987).
+        'kozak': {'minus3': 'A', 'leader': 'AAAAAA', 'plus4': None},
+        'second_codon_note': ('position +2 influences initiation; no '
+                              'consensus as sharp as the -3 signal'),
+        'dinucleotide': False,
+    },
+    'E_coli_K12': {
+        'label': 'Escherichia coli K-12',
+        'restriction_sites': {
+            'EcoRI': 'GAATTC', 'BamHI': 'GGATCC', 'HindIII': 'AAGCTT',
+            'XhoI': 'CTCGAG', 'SalI': 'GTCGAC', 'NotI': 'GCGGCCGC',
+            'NdeI': 'CATATG',   # contains ATG - classic re-cloning trap
+            'NcoI': 'CCATGG',   # contains ATG - classic re-cloning trap
+        },
+        'avoid': {
+            'internal Shine-Dalgarno': r'AGG[AG]GG|AGGAG|GAGGG',
+            'terminator-like poly-T': r'T{6,}',
+            'rare-codon cluster': r'(?:AGA|AGG|ATA|CCC|CTA|GGA){3,}',
+            'T7-terminator-like': r'TAAAT[AT]{5,}',
+        },
+        'report': {
+            'dam methylation site (GATC)': r'GATC',
+            'dcm methylation site (CCWGG)': r'CC[AT]GG',
+        },
+        'gc_range': (0.40, 0.60),
+        # Bacteria initiate via the Shine-Dalgarno sequence, not a Kozak
+        # context. Claiming to score one here would be wrong.
+        'kozak': None,
+        'dinucleotide': False,
+        'second_codon_note': ('A-starting second codons can promote internal '
+                              're-initiation in E. coli'),
+    },
+    'B_subtilis': {
+        'label': 'Bacillus subtilis 168 (Gram-positive secretion host)',
+        'restriction_sites': {
+            'EcoRI': 'GAATTC', 'BamHI': 'GGATCC', 'HindIII': 'AAGCTT',
+            'XhoI': 'CTCGAG', 'SalI': 'GTCGAC', 'NotI': 'GCGGCCGC',
+            'NdeI': 'CATATG', 'NcoI': 'CCATGG',
+        },
+        'avoid': {
+            'internal Shine-Dalgarno': r'AGG[AG]GG|AGGAG|GAGGG',
+            'terminator-like poly-T': r'T{6,}',
+            'rare-codon cluster': r'(?:CGA|AGG|CTA|CCC){3,}',
+        },
+        'report': {},
+        'gc_range': (0.38, 0.50),
+        'kozak': None,
+        'dinucleotide': False,
+        'second_codon_note': ('position +2 affects initiation in Gram-positive '
+                              'hosts; no sharp consensus published'),
+    },
+    'H_sapiens': {
+        'label': 'Homo sapiens / HEK293 (mammalian expression)',
+        'restriction_sites': {
+            'EcoRI': 'GAATTC', 'BamHI': 'GGATCC', 'HindIII': 'AAGCTT',
+            'XhoI': 'CTCGAG', 'SalI': 'GTCGAC', 'NotI': 'GCGGCCGC',
+            'AgeI': 'ACCGGT', 'EcoRV': 'GATATC',
+        },
+        'avoid': {
+            'polyA signal': r'AATAAA|ATTAAA',
+            'AU-rich element': r'ATTTA',
+            'cryptic splice donor': r'GTAAGT',
+            'rare-codon cluster': r'(?:GCG|CGT|TTA|CTA|CCG|TCG){3,}',
+        },
+        'report': {},
+        'gc_range': (0.40, 0.60),
+        # Mammalian Kozak: GCCACCATGG. A purine at -3 AND a G at +4, the
+        # latter being inside the CDS and therefore designable.
+        'kozak': {'minus3': 'AG', 'leader': 'GCCACC', 'plus4': 'G'},
+        # CpG and UpA depletion reduce transgene silencing and ZAP-mediated
+        # mRNA decay in mammalian cells.
+        'dinucleotide': True,
+        'second_codon_note': ('position +2 begins at the Kozak +4 position, '
+                              'which is checked above'),
     },
 }
+
+
+def _validate_configs() -> None:
+    """Fail at import if an organism config is malformed.
+
+    Added after a config written against an older schema (restriction_sites
+    as a list, no 'report' key, no stop codons) failed deep inside the
+    pipeline instead of at load time.
+    """
+    required = {'label', 'restriction_sites', 'avoid', 'report', 'gc_range',
+                'kozak', 'dinucleotide', 'second_codon_note'}
+    # Species token per host, used below to catch one organism's commentary
+    # being shown under another - a leak that has happened twice.
+    tokens = {k: k.split('_')[1].lower() for k in ORGANISM_CONFIGS}
+    for name, cfg in ORGANISM_CONFIGS.items():
+        missing = required - set(cfg)
+        if missing:
+            raise ValueError(f'{name}: config missing key(s) {sorted(missing)}')
+        if not isinstance(cfg['restriction_sites'], dict):
+            raise TypeError(f"{name}: 'restriction_sites' must be a dict of "
+                            '{enzyme: site}, not a list')
+        for enz, site in cfg['restriction_sites'].items():
+            if set(site) - set('ACGT'):
+                raise ValueError(f'{name}/{enz}: non-ACGT site {site!r}')
+        for label, pat in {**cfg['avoid'], **cfg['report']}.items():
+            try:
+                re.compile(pat)
+            except re.error as exc:
+                raise ValueError(f'{name}/{label}: bad regex - {exc}') from exc
+        lo, hi = cfg['gc_range']
+        if not 0.0 < lo < hi < 1.0:
+            raise ValueError(f'{name}: implausible gc_range {cfg["gc_range"]}')
+        if name not in FREQS:
+            raise ValueError(f'{name}: no codon usage table in FREQS')
+        if name not in N_END_DESTABILISING:
+            raise ValueError(f'{name}: no N-end rule set')
+
+        # No host's user-visible text may name a different host.
+        own = tokens[name]
+        text = ' '.join([cfg['label'], cfg['second_codon_note']]).lower()
+        for other, tok in tokens.items():
+            if other != name and tok != own and tok in text:
+                raise ValueError(
+                    f'{name}: text mentions {other} ("{tok}"). Organism '
+                    'commentary must describe only its own host.')
 
 
 # ==========================================================================
@@ -546,10 +753,23 @@ def five_prime_structure_score(dna: str, window: int = 48) -> dict:
     }
 
 
-# Destabilising N-terminal residues (Bachmair/Varshavsky N-end rule, yeast).
+# Destabilising N-terminal residues, per host. These pathways genuinely
+# differ, so one shared set would be wrong.
+#   yeast   - Bachmair/Varshavsky N-end rule
+#   E. coli - ClpS / Leu,Phe-tRNA-protein transferase branch
+#   B. subtilis - Gram-positive ClpS-type; less well characterised than the
+#                 E. coli pathway, so this set is indicative, not definitive
+#   human   - UBR-box Arg/N-degron, primary destabilising residues only
 N_END_DESTABILISING = {
     'S_cerevisiae': set('RKHFLWIYND'),
+    'E_coli_K12': set('RKLFWY'),
+    'B_subtilis': set('LFWY'),
+    'H_sapiens': set('RKHFWYLI'),
 }
+
+# Run here, not next to ORGANISM_CONFIGS: the check also verifies that every
+# organism has an N-end rule set, which is only defined at this point.
+_validate_configs()
 
 # --------------------------------------------------------------------------
 # Translation-initiation context (Kozak)
@@ -562,52 +782,108 @@ N_END_DESTABILISING = {
 # design - they come from the vector/promoter. The context can therefore only
 # be CHECKED when the user supplies the upstream sequence, never inferred
 # from the protein. kozak_check returns 'unknown' rather than guessing.
-KOZAK_PREFERRED = 'A'
-RECOMMENDED_LEADER = 'AAAAAA'
-
-
-def kozak_check(upstream: str, dna: str) -> dict:
+def kozak_check(kozak_cfg: dict | None, upstream: str, dna: str) -> dict:
     """Score the translation-initiation context around the start codon.
 
-    upstream: the 5' UTR bases immediately preceding the ATG (vector-derived,
-    may be empty). Only the last 6 are used.
+    kozak_cfg: the organism's rule, or None for a prokaryote, where
+    initiation is driven by the Shine-Dalgarno sequence and a Kozak score is
+    simply not a meaningful quantity.
+    upstream:  5' UTR bases immediately before the ATG (vector-derived).
     """
-    up = re.sub(r'[^ACGT]', '', (upstream or '').upper())
     start_ok = dna[:3] == 'ATG'
 
+    if kozak_cfg is None:
+        return {
+            'status': 'not_applicable', 'flag': False,
+            'starts_with_ATG': start_ok,
+            'note': ('Prokaryotic host: initiation is set by the '
+                     'Shine-Dalgarno sequence and its spacing, not by a '
+                     'Kozak context. Internal SD motifs are avoided during '
+                     'design instead.'),
+        }
+
+    allowed = kozak_cfg['minus3']
+    leader = kozak_cfg['leader']
+    plus4_want = kozak_cfg.get('plus4')
+    plus4 = dna[3] if len(dna) > 3 else None
+
+    # +4 is the first base of codon 2, so unlike -3 it IS part of the
+    # designed sequence. But it is only changeable if residue 2 actually has
+    # a synonym starting with the wanted base - Ser, for instance, has none
+    # beginning with G. Flagging an unreachable target would mean every
+    # Ser-at-position-2 protein carries a warning nobody can act on.
+    plus4_ok = plus4_want is None or plus4 == plus4_want
+    plus4_fixable = False
+    if not plus4_ok and len(dna) >= 6:
+        aa2 = AA_BY_CODON.get(dna[3:6])
+        plus4_fixable = any(c.startswith(plus4_want)
+                            for c in CODON_TABLE.get(aa2, []))
+
+    if plus4_ok:
+        plus4_note = ''
+    elif plus4_fixable:
+        plus4_note = (f' +4 is {plus4}, not {plus4_want}: the mammalian '
+                      'consensus favours G after the ATG, and residue 2 has '
+                      'a synonymous codon that would provide it.')
+    else:
+        plus4_note = (f' +4 is {plus4}; residue 2 has no {plus4_want}-starting '
+                      'codon, so the consensus is unreachable without '
+                      'changing the protein.')
+
+    up = re.sub(r'[^ACGT]', '', (upstream or '').upper())
     if not up:
         return {
-            'context': None,
-            'minus3': None,
-            'a_richness': None,
-            'flag': False,
+            'context': None, 'minus3': None,
+            'plus4': plus4, 'plus4_ok': plus4_ok,
+            'plus4_fixable': plus4_fixable,
+            'flag': plus4_fixable,
             'status': 'unknown',
             'starts_with_ATG': start_ok,
-            'recommended_leader': RECOMMENDED_LEADER,
-            'note': ('No 5\' UTR supplied, so the initiation context cannot '
-                     'be assessed - it is determined by your vector, not by '
-                     f'the coding sequence. A {RECOMMENDED_LEADER} leader '
-                     'immediately before the ATG is a strong default.'),
+            'recommended_leader': leader,
+            'note': ('No 5\' UTR supplied, so the -3 context cannot be '
+                     'assessed - it is set by your vector, not by the coding '
+                     f'sequence. A {leader} leader before the ATG is a strong '
+                     'default.' + plus4_note),
         }
 
     ctx = up[-6:]
     minus3 = ctx[-3] if len(ctx) >= 3 else None
-    a_rich = round(ctx.count('A') / len(ctx), 2)
-    weak = minus3 is not None and minus3 != KOZAK_PREFERRED
+    weak = minus3 is not None and minus3 not in allowed
 
+    pretty = 'A' if allowed == 'A' else 'a purine (A or G)'
     return {
         'context': f'{ctx}|{dna[:4]}',
         'minus3': minus3,
-        'a_richness': a_rich,
-        'flag': weak,
-        'status': 'weak' if weak else 'strong',
+        'plus4': plus4, 'plus4_ok': plus4_ok,
+        'plus4_fixable': plus4_fixable,
+        'a_richness': round(ctx.count('A') / len(ctx), 2),
+        'flag': weak or plus4_fixable,
+        'status': 'weak' if (weak or plus4_fixable) else 'strong',
         'starts_with_ATG': start_ok,
-        'recommended_leader': RECOMMENDED_LEADER,
-        'note': (f'-3 is {minus3}, not A: yeast initiation is measurably less '
-                 'efficient without A at -3'
-                 if weak else
-                 'A at -3, the dominant yeast initiation signal'),
+        'recommended_leader': leader,
+        'note': ((f'-3 is {minus3}, not {pretty}: initiation is measurably '
+                  'less efficient.' if weak else
+                  f'-3 is {minus3}, matching {pretty}.') + plus4_note),
     }
+
+
+def dinucleotide_bias(dna: str) -> dict:
+    """CpG and UpA observed/expected ratios.
+
+    Relevant for mammalian expression: CpG-rich transgenes are prone to
+    methylation-driven silencing and TLR9 recognition, and UpA-rich mRNAs are
+    targets for ZAP-mediated decay. o/e near 1.0 means no depletion.
+    """
+    n = len(dna)
+    if n < 2:
+        return {'CpG_oe': None, 'UpA_oe': None}
+
+    def oe(di, b1, b2):
+        obs = sum(1 for i in range(n - 1) if dna[i:i + 2] == di)
+        c1, c2 = dna.count(b1), dna.count(b2)
+        return round(obs * n / (c1 * c2), 3) if c1 and c2 else None
+
+    return {'CpG_oe': oe('CG', 'C', 'G'), 'UpA_oe': oe('TA', 'T', 'A')}
 
 
 def extra_checks(dna: str, protein: str, organism: str,
@@ -616,8 +892,18 @@ def extra_checks(dna: str, protein: str, organism: str,
     cfg = ORGANISM_CONFIGS[organism]
     checks = {}
 
-    checks['kozak_context'] = kozak_check(upstream, dna)
+    checks['kozak_context'] = kozak_check(cfg['kozak'], upstream, dna)
     checks['five_prime_structure'] = five_prime_structure_score(dna)
+
+    if cfg['dinucleotide']:
+        di = dinucleotide_bias(dna)
+        checks['dinucleotide_bias'] = {
+            **di,
+            'flag': (di['CpG_oe'] or 0) > 0.60 or (di['UpA_oe'] or 0) > 0.80,
+            'note': ('elevated CpG or UpA: higher risk of transgene '
+                     'silencing and ZAP-mediated mRNA decay in mammalian '
+                     'cells'),
+        }
 
     # 5'-terminal GC: a GC-poor ramp eases ribosome loading
     head = dna[:48]
@@ -627,15 +913,15 @@ def extra_checks(dna: str, protein: str, organism: str,
         'note': 'high 5\' GC can occlude the ribosome-binding region',
     }
 
-    # Second codon: position +2 influences initiation, but yeast has no
-    # consensus rule as sharp as the -3 signal, so this is reported only.
+    # Second codon. The commentary is per-host DATA, not a branch here, so
+    # adding an organism never means editing this function - and the config
+    # validator refuses a host that forgets to supply it.
     second = dna[3:6]
     checks['second_codon'] = {
         'codon': second,
         'aa': AA_BY_CODON.get(second),
         'flag': False,
-        'note': ('position +2 influences initiation efficiency; no strong '
-                 'consensus rule in S. cerevisiae'),
+        'note': cfg['second_codon_note'],
     }
 
     # N-end rule: the residue exposed after Met excision sets protein half-life
@@ -842,7 +1128,7 @@ if __name__ == '__main__':
 #     (python_codon_tables, CC0, redistributes them). Individual facts are
 #     not copyrightable, but the EU sui generis database right (Directive
 #     96/9/EC, implemented in Germany as UrhG section 87a ff.) can protect a
-#     substantial extraction from a database. Two complete species tables is
+#     substantial extraction from a database. FOUR complete species tables is
 #     arguably substantial. Mitigation, in order of safety:
 #       (a) cite Nakamura, Gojobori & Ikemura (2000) NAR 28:292 and state
 #           the source in the app - done above and required either way;
@@ -851,7 +1137,10 @@ if __name__ == '__main__':
 #       (c) or pull at runtime via python_codon_tables (CC0) rather than
 #           hard-coding, which inherits its public-domain dedication.
 #     For a university assignment (a) is proportionate. For anything
-#     commercial, do (b).
+#     commercial, do (b). NOTE: the argument for "substantial extraction"
+#     gets stronger with every table added - at four species this is no
+#     longer a trivial excerpt, so (b) or (c) is the safer footing if this
+#     app is ever used outside the course.
 #   * REBASE is the authoritative restriction-enzyme database and is free
 #     for academic use only. Do NOT scrape it for an expanded enzyme panel
 #     in a public app; use NEB's published recognition sequences or type
