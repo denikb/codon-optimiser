@@ -1,0 +1,19 @@
+# Deny-by-default: this folder also holds copyrighted journal PDFs and
+# course material that must NOT be pushed to a public repository.
+# Ignore everything, then allow only the files the web app needs.
+*
+
+!.gitignore
+!README.md
+!app.py
+!codon_optimizer.py
+!theme.py
+!requirements.txt
+
+# the Streamlit theme: un-ignore the folder before the file inside it
+!.streamlit/
+.streamlit/*
+!.streamlit/config.toml
+
+# never commit secrets, even if one is created later
+.streamlit/secrets.toml
