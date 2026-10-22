@@ -233,8 +233,6 @@ ORGANISM_CONFIGS = {
         'gc_range': (0.35, 0.45),
         # Yeast initiation: A at -3 dominates (Hamilton 1987; Cigan 1987).
         'kozak': {'minus3': 'A', 'leader': 'AAAAAA', 'plus4': None},
-        'second_codon_note': ('position +2 influences initiation; no '
-                              'consensus as sharp as the -3 signal'),
         'dinucleotide': False,
     },
     'E_coli_K12': {
@@ -260,8 +258,6 @@ ORGANISM_CONFIGS = {
         # context. Claiming to score one here would be wrong.
         'kozak': None,
         'dinucleotide': False,
-        'second_codon_note': ('A-starting second codons can promote internal '
-                              're-initiation in E. coli'),
     },
     'B_subtilis': {
         'label': 'Bacillus subtilis 168 (Gram-positive secretion host)',
@@ -279,8 +275,6 @@ ORGANISM_CONFIGS = {
         'gc_range': (0.38, 0.50),
         'kozak': None,
         'dinucleotide': False,
-        'second_codon_note': ('position +2 affects initiation in Gram-positive '
-                              'hosts; no sharp consensus published'),
     },
     'H_sapiens': {
         'label': 'Homo sapiens / HEK293 (mammalian expression)',
@@ -303,8 +297,6 @@ ORGANISM_CONFIGS = {
         # CpG and UpA depletion reduce transgene silencing and ZAP-mediated
         # mRNA decay in mammalian cells.
         'dinucleotide': True,
-        'second_codon_note': ('position +2 begins at the Kozak +4 position, '
-                              'which is checked above'),
     },
 }
 
@@ -317,7 +309,7 @@ def _validate_configs() -> None:
     pipeline instead of at load time.
     """
     required = {'label', 'restriction_sites', 'avoid', 'report', 'gc_range',
-                'kozak', 'dinucleotide', 'second_codon_note'}
+                'kozak', 'dinucleotide'}
     # Species token per host, used below to catch one organism's commentary
     # being shown under another - a leak that has happened twice.
     tokens = {k: k.split('_')[1].lower() for k in ORGANISM_CONFIGS}
@@ -344,14 +336,8 @@ def _validate_configs() -> None:
         if name not in N_END_DESTABILISING:
             raise ValueError(f'{name}: no N-end rule set')
 
-        # No host's user-visible text may name a different host.
-        own = tokens[name]
-        text = ' '.join([cfg['label'], cfg['second_codon_note']]).lower()
-        for other, tok in tokens.items():
-            if other != name and tok != own and tok in text:
-                raise ValueError(
-                    f'{name}: text mentions {other} ("{tok}"). Organism '
-                    'commentary must describe only its own host.')
+        # label leaks are checked here; branch-authored notes in
+        # _check_host_notes(), which has to call the functions to see them.
 
 
 # ==========================================================================
@@ -886,6 +872,61 @@ def dinucleotide_bias(dna: str) -> dict:
     return {'CpG_oe': oe('CG', 'C', 'G'), 'UpA_oe': oe('TA', 'T', 'A')}
 
 
+def second_codon_check(organism: str, codon: str) -> dict:
+    """Host-specific commentary on the +2 codon.
+
+    One explicit branch per host, and deliberately NO `else`. An earlier
+    version used `if E. coli / else <yeast text>`, so every host added later
+    fell into the else and was shown yeast commentary - silently, because an
+    else always matches. Falling off the end raises instead, and
+    _check_host_notes() calls this for every organism at import so a missing
+    branch is caught at load time rather than in front of a user.
+    """
+    if organism == 'S_cerevisiae':
+        return {'flag': False,
+                'note': ('position +2 influences initiation; no consensus as '
+                         'sharp as the -3 signal')}
+
+    if organism == 'E_coli_K12':
+        return {'flag': codon.startswith('A'),
+                'note': ('A-starting second codons can promote internal '
+                         're-initiation in E. coli')}
+
+    if organism == 'B_subtilis':
+        return {'flag': False,
+                'note': ('position +2 affects initiation in Gram-positive '
+                         'hosts; no sharp consensus published')}
+
+    if organism == 'H_sapiens':
+        return {'flag': False,
+                'note': ('position +2 begins at the Kozak +4 position, which '
+                         'is checked above')}
+
+    raise ValueError(f'no second-codon commentary defined for {organism!r}. '
+                     'Add a branch to second_codon_check.')
+
+
+def _check_host_notes() -> None:
+    """Exercise every host's branch at import.
+
+    Two failures this catches before a user ever sees them:
+      * a host with no branch        -> ValueError from the function itself
+      * a host whose text names a different host -> raised here
+    Keeping branches safe needs this; an `if` chain cannot check itself.
+    """
+    tokens = {k: k.split('_')[1].lower() for k in ORGANISM_CONFIGS}
+    for name in ORGANISM_CONFIGS:
+        note = second_codon_check(name, 'ATG')['note'].lower()
+        for other, tok in tokens.items():
+            if other != name and tok != tokens[name] and tok in note:
+                raise ValueError(
+                    f'{name}: second-codon note mentions {other} ("{tok}"). '
+                    'Each host must describe only itself.')
+
+
+_check_host_notes()
+
+
 def extra_checks(dna: str, protein: str, organism: str,
                  upstream: str = '') -> dict:
     """Properties beyond codon usage that affect transcription/translation."""
@@ -913,15 +954,11 @@ def extra_checks(dna: str, protein: str, organism: str,
         'note': 'high 5\' GC can occlude the ribosome-binding region',
     }
 
-    # Second codon. The commentary is per-host DATA, not a branch here, so
-    # adding an organism never means editing this function - and the config
-    # validator refuses a host that forgets to supply it.
     second = dna[3:6]
     checks['second_codon'] = {
         'codon': second,
         'aa': AA_BY_CODON.get(second),
-        'flag': False,
-        'note': cfg['second_codon_note'],
+        **second_codon_check(organism, second),
     }
 
     # N-end rule: the residue exposed after Met excision sets protein half-life
