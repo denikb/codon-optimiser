@@ -6,6 +6,7 @@
 !.gitignore
 !README.md
 !DEPLOYMENT.md
+!INSTALL.md
 !app.py
 !codon_optimizer.py
 !theme.py
